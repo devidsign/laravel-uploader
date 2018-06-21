@@ -120,6 +120,11 @@ class Uploader
         return $this->_getUrl($this->_getUri($version)) . $name;
     }
 
+    public function getWebUri($name, $version = '')
+    {
+        return $this->_getUri($version) . $name;
+    }
+
     public function getPathUrl($name, $version = '', $type = 'public')
     {
         return $this->_getUrl($this->_getUri($version), $type) . $name;
