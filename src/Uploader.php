@@ -17,6 +17,7 @@ class Uploader
     private $directory = '';
     private $ext = null;
     private $error = null;
+    private $name;
 
     public function __construct()
     {
@@ -28,6 +29,31 @@ class Uploader
         return $this->error;
     }
 
+    public function config($directory, $name = false, $id = 0, $config = [])
+    {
+        $this->request = Request::capture();
+        $this->config = config('uploader', [
+            'storage_dir' => 'public',
+            'upload_dir' => 'uploads',
+            'files_dir' => 'files',
+            'images_dir' => 'images',
+            'limit' => 1000,
+        ]);
+        $this->id = $id;
+        $this->directory = $directory;
+        $this->name = $name;
+        $this->isFile = false;
+
+        if ($config) {
+            if (!is_array($config))
+                return $this->_response();
+
+            $this->config = array_merge($this->config, $config);
+        }
+
+
+        return $this;
+    }
     public function init($directory, $id = 0, $isFile = false, $config = [])
     {
         $this->request = Request::capture();
@@ -107,6 +133,9 @@ class Uploader
 
     private function _getName()
     {
+        if ($this->name) {
+            return basename($this->name,'.'.$this->ext).'.'.$this->ext;
+        }
         $name = (pow(10, 6) + intval($this->id)) . "_" . rand(1000, 9000) . "_" . time() . '.' . $this->ext;
         return $this->config['prefix'] . (
             $this->config['prefix']
@@ -172,7 +201,8 @@ class Uploader
         if (!$this->isFile && $version) {
             $url .= $version . "/";
         }
-        $url .= (floor($this->id / $this->config['limit']) * $this->config['limit']) . "/";
+        if ($this->config['limit'])
+            $url .= (floor($this->id / $this->config['limit']) * $this->config['limit']) . "/";
         return str_replace('//', '/', $url);
     }
 
@@ -242,7 +272,7 @@ class Uploader
         return 'image.' . last(explode('/', explode(';', $data)[0]));
     }
 
-    private function _createDir($directory)
+    public function _createDir($directory)
     {
         if (!is_dir($directory))
             if (mkdir($directory, 0777, true))
