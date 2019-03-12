@@ -3,315 +3,254 @@
 namespace Idsign\Uploader;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Intervention\Image\Facades\Image;
+use Intervention\Image\ImageManager;
 use Symfony\Component\HttpFoundation\File\File;
 
 
 class Uploader
 {
-    private $data = null;
-    private $request = null;
-    private $config = [];
     private $isFile = false;
+    private $config = [];
     public $id = 0;
     private $directory = '';
     private $ext = null;
     private $error = null;
-    private $name;
+    private $name = false;
+    private $savePath = false;
+    private $file = null;
+    private $imgManager = null;
 
-    public function __construct()
+    public function __construct($config = [])
     {
-        $this->request = Request::capture();
-    }
-
-    public function getError()
-    {
-        return $this->error;
-    }
-
-    public function config($directory, $name = false, $id = 0, $config = [])
-    {
-        $this->request = Request::capture();
+        $this->request = request();
+        $this->imgManager = new ImageManager();
         $this->config = config('uploader', [
             'storage_dir' => 'public',
             'upload_dir' => 'uploads',
-            'files_dir' => 'files',
-            'images_dir' => 'images',
+            'before_limit' => true,
             'limit' => 1000,
         ]);
-        $this->id = $id;
-        $this->directory = $directory;
+        $this->_config($config);
+    }
+
+    public function getImgManager()
+    {
+        return $this->imgManager;
+    }
+
+    private function _config($config = [])
+    {
+        if ($config) {
+            if (!is_array($config))
+                return false;
+
+            $this->config = array_merge($this->config, $config);
+        }
+        return true;
+    }
+
+    private function _getUri()
+    {
+        //dd($this->config);
+        $url = $this->config['upload_dir'] . "/" . ($this->config['before_limit'] ? ($this->directory . "/") : '');
+        if ($this->config['limit']) {
+            $url .= (floor($this->id / $this->config['limit']) * $this->config['limit']) . "/";
+            if ($this->config['add_id_directory'] && $this->id) {
+                $url .= $this->id . "/";
+            }
+        }
+        $url .= (!$this->config['before_limit'] ? ($this->directory . "/") : '');
+        return str_replace('//', '/', $url);
+    }
+
+    public function setPath($path = false)
+    {
+        if ($path) {
+            if (!$this->createDir($path))
+                return false;
+
+            $this->savePath = $path;
+            return true;
+        }
+        return false;
+    }
+
+    public function setName($name = false, $extension = false)
+    {
+        $name = explode('.', $name);
+        $ext = last($name);
+        $name = array_shift($name);
         $this->name = $name;
-        $this->isFile = false;
-
-        if ($config) {
-            if (!is_array($config))
-                return $this->_response();
-
-            $this->config = array_merge($this->config, $config);
-        }
-
-
+        if ($extension)
+            $this->ext .= $ext;
         return $this;
-    }
-    public function init($directory, $id = 0, $isFile = false, $config = [])
-    {
-        $this->request = Request::capture();
-        $this->config = config('uploader', [
-            'storage_dir' => 'public',
-            'upload_dir' => 'uploads',
-            'files_dir' => 'files',
-            'images_dir' => 'images',
-            'limit' => 1000,
-        ]);
-        $this->id = $id;
-        $this->directory = $directory;
-        $this->isFile = $isFile;
-
-        if ($config) {
-            if (!is_array($config))
-                return $this->_response();
-
-            $this->config = array_merge($this->config, $config);
-        }
-
-
-        return $this;
-    }
-
-    public function file($data, $put = false)
-    {
-        if (!$this->_load($data, $put))
-            return $this->_response();
-        $this->isFile = true;
-        $response = $put ? $this->_put($this->_getUri()) : $this->_move($this->_getUri());
-
-        return $this->_response($response);
-    }
-
-    public function image($data, $put = false)
-    {
-        if (!$this->_load($data, $put))
-            return $this->_response();
-        $response = $put ? $this->_put($this->_getUri('original')) : $this->_move($this->_getUri('original'));
-        $name = $this->_response($response);
-        $original_dir = $this->_getUrl($this->_getUri('original'), $this->config['storage_dir']);
-        $this->_imagesEach(
-            function ($size, $dim) use ($name, $original_dir) {
-                $directory = $this->_getUrl($this->_getUri($size), $this->config['storage_dir']);
-
-                if ($this->_createDir($directory) < 0)
-                    return false;
-
-                if ($dim['width'] > $dim['height'])
-                    list($dim['width'], $dim['height']) = array($dim['height'], $dim['width']);
-
-                $original = Image::make($original_dir . $name);
-                $width = $widthT = $original->width();
-                $height = $heightT = $original->height();
-
-                if (($dim['width'] <= $width) and ($dim['height'] <= $height)) {
-                    $widthT = $dim['width'];
-                    $heightT = $dim['height'];
-                }
-
-                if ($widthT > $heightT) {
-                    $original->widen($widthT, function ($constraint) {
-                        $constraint->upsize();
-                    })->save($directory . $name);
-                } else {
-                    $original->heighten($heightT, function ($constraint) {
-                        $constraint->upsize();
-                    })->save($directory . $name);
-                }
-                return true;
-            },
-            false
-        );
-        return $name;
     }
 
     private function _getName()
     {
         if ($this->name) {
-            return basename($this->name,'.'.$this->ext).'.'.$this->ext;
+            return basename($this->name, '.' . $this->ext) . '.' . $this->ext;
         }
         $name = (pow(10, 6) + intval($this->id)) . "_" . rand(1000, 9000) . "_" . time() . '.' . $this->ext;
-        return $this->config['prefix'] . (
-            $this->config['prefix']
-                ? "_" . rand(1, 9) . "_" . rand(100, 900) . '.' . $this->ext
-                : $name
-            );
+        $this->name = $this->config['prefix']
+            ? $this->config['prefix'] . "_" . rand(1, 9) . "_" . rand(100, 900) . '.' . $this->ext
+            : $name;
+        return $this->name;
     }
 
-    public function getWebUrl($name, $version = '')
+    public function getPath()
     {
-        return $this->_getUrl($this->_getUri($version)) . $name;
+        if (!$this->savePath)
+            $this->savePath = $this->_getUri();
+
+        $this->createDir($this->savePath);
+
+        return $this->savePath;
     }
 
-    public function getWebUri($name, $version = '')
+    public function reset()
     {
-        return $this->_getUri($version) . $name;
+        $this->savePath = false;
+        $this->name = false;
     }
 
-    public function getPathUrl($name, $version = '', $type = 'public')
+    public function init($directory, $id = 0, $isFile = false, $config = [])
     {
-        return $this->_getUrl($this->_getUri($version), $type) . $name;
+        $this->reset();
+        $this->_config($config);
+        $this->isFile = $isFile;
+        $this->directory = $directory;
+        $this->id = $id;
+        return $this;
     }
 
-    private static function instance($directory, $id, $isFile)
+    public function isFile()
     {
-        $instance = new static();
-        $instance->init($directory, $id, $isFile);
-        return $instance;
+        $this->isFile = true;
     }
 
-    public static function getUrl($id, $directory, $name, $isFile = false, $version = '')
+    public function isImage()
     {
-        $instance = self::instance($directory, $id, $isFile);
-        return $instance->getWebUrl($name, $version);
+        $this->isFile = false;
     }
 
-    public static function getPath($id, $directory, $name, $isFile = false, $version = '')
+    public function directory($directory)
     {
-        $instance = self::instance($directory, $id, $isFile);
-        return $instance->getPathUrl($name, $version);
+        $this->directory = $directory;
     }
 
-    private function _getUrl($url, $type = 'url')
+    public function make($data, $manager = false)
     {
-        switch ($type) {
-            default:
-            case 'url':
-                $path = asset($url);
-                break;
-            case 'public':
-                $path = $this->_fixPath(public_path($url));
-                break;
-            case 'storage':
-                $path = $this->_fixPath(storage_path($url));
-                break;
+        if ($this->isFile)
+            $this->file = $this->_makeFile($data);
+        else
+            $this->file = $this->imgManager->make($data);
+
+        return $manager ? $this->file : $this;
+    }
+
+    public function _makeFile($data)
+    {
+        if ($data instanceof UploadedFile) {
+            return $data;
         }
-        return rtrim($path, '/') . '/';
-    }
-
-    private function _fixPath($path)
-    {
-        return str_replace("\\", "/", $path);
-    }
-
-    private function _getUri($version = false)
-    {
-        $url = $this->config['upload_dir'] . "/" . $this->config[$this->isFile ? 'files_dir' : 'images_dir'] . "/" . $this->directory . "/";
-        if (!$this->isFile && $version) {
-            $url .= $version . "/";
+        if (is_file($data)) {
+            return new UploadedFile($data, 'file');
         }
-        if ($this->config['limit'])
-            $url .= (floor($this->id / $this->config['limit']) * $this->config['limit']) . "/";
-        return str_replace('//', '/', $url);
+        return null;
     }
 
-    private function _move($uri)
+    public function image($data = false, $modifiers = [], $quality = 100)
     {
-        $name = $this->_getName();
-        $uploaded = $this->data->move($this->_getUrl($uri, $this->config['storage_dir']), $name);
-        if ($uploaded)
-            $this->file = $uploaded;
-        return $uploaded ? $name : false;
-    }
+        $this->isFile = false;
+        if ($data)
+            $this->make($data);
 
-    private function _put($uri)
-    {
-        $path = $this->_getUrl($uri, $this->config['storage_dir']);
-        $name = $this->_getName();
-        if ($this->_createDir($path) < 0)
+        if ($modifiers) {
+            foreach ($modifiers as $modifier => $parameters) {
+                $parameters = is_array($parameters) ? $parameters : [$parameters];
+                $this->file->$modifier(...$parameters);
+            }
+        }
+        if (!$this->file)
             return false;
-        $uploaded = file_put_contents($this->_getUrl($uri, $this->config['storage_dir']) . $name, $this->data);
-        if (!$uploaded) {
-            $this->error = 'Saving error';
-            return false;
-        }
-        $this->file = new File($path . $name);
-        return $name;
+        $this->ext = $this->file->extension
+            ? $this->file->extension
+            : last(explode('/', $this->file->mime));
 
+        $filename = $this->getPath() . $this->_getName();
+        return $this->file->save($filename, $quality);
     }
 
-    private function _load($input, $put = false)
+    public function file($data = false)
     {
-        if ($put && !is_array($input))
-            $input = $this->_fromBase64($input);
+        $this->isFile = true;
+        if ($data)
+            $this->make($data);
 
-        if (!$input) {
-            $this->error = 'File non found!';
+        if (!$this->file)
             return false;
-        }
 
-        $this->data = $put ? $input['data'] : $this->request->$input;
-        $this->ext = $put
-            ? last(
-                explode(
-                    '.',
-                    $input['name']
-                )
-            )
-            : $this->data->guessExtension();
-        return true;
+        $this->ext = $this->file->guessExtension();
+        $filename = $this->getPath() . $this->_getName();
+
+        return $this->file->move($filename);
     }
 
-    private function _fromBase64($data)
+    public function getInfo()
     {
-        list($type, $data) = explode(';', $data);
-        list($base64, $data) = explode(',', $data);
-        list($start, $ext) = explode('/', $type);
-        $data = base64_decode($data);
+        $filename = $this->getPath() . $this->_getName();
+        if ($this->isFile)
+            return $this->_response($this->_makeFile($filename));
 
-        $name = 'image.' . $ext;
+        return $this->_response($this->imgManager->make($filename));
+    }
+
+    private function _response($driver)
+    {
+        if ($this->isFile) {
+            return [
+                'mime' => $driver->getMimeType(),
+                'path' => $driver->getPath(),
+                'name' => $driver->getFilename(),
+                'extension' => $driver->getExtension(),
+                'fullpath' => $driver->getPathname(),
+                'driver' => $driver
+            ];
+        }
+
+        $ext = $driver->extension
+            ? $driver->extension
+            : last(explode('/', $driver->mime));
+
         return [
-            'data' => $data,
-            'name' => $name
+            'mime' => $driver->mime,
+            'path' => $driver->dirname,
+            'name' => $driver->basename,
+            'extension' => $ext,
+            'fullpath' => $driver->dirname . '/' . $driver->basename,
+            'partial' => ltrim(str_replace($this->config['upload_dir'], '', $driver->dirname . '/' . $driver->basename), '/'),
+            'driver' => $driver
         ];
     }
 
-    private function _getExt($data)
+    public function createDir($directory)
     {
-        return 'image.' . last(explode('/', explode(';', $data)[0]));
-    }
+        if (is_dir($directory))
+            return true;
 
-    public function _createDir($directory)
-    {
-        if (!is_dir($directory))
-            if (mkdir($directory, 0777, true))
-                return 1;
-            else {
-                $this->error = 'Permission denied: Create directory';
-                return -1;
-            }
-        else
-            return 0;
-    }
+        if (mkdir($directory, 0777, true))
+            return true;
 
-    private function _imagesEach($callback, $original = true)
-    {
-        if ($original) {
-            $this->config['sizes']['original'] = [
-                'width' => 10000000,
-                'height' => 10000000
-            ];
-        }
-        foreach ($this->config['sizes'] as $size => $dim) {
-            $callback($size, $dim);
-        }
+        $this->error = 'Permission denied: Create directory';
+        return false;
     }
 
     public function delete($name)
     {
-        if ($this->isFile) {
-            return $this->deleteFile($this->_getUrl($this->_getUri(), $this->config['storage_dir']) . $name);
-        }
-        $this->_imagesEach(function ($size) use ($name) {
-            $this->deleteFile($this->_getUrl($this->_getUri($size), $this->config['storage_dir']) . $name);
-        });
-        return true;
+        return $this->deleteFile($this->getPath() . $name);
     }
 
     public function deleteFile($file)
@@ -321,10 +260,4 @@ class Uploader
 
         return true;
     }
-
-    private function _response($response = false)
-    {
-        return $response;
-    }
-
 }
