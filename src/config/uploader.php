@@ -11,10 +11,10 @@ return [
         'files' => ['pdf','doc','docx','odt', 'jpg', 'png', 'jpeg'],
         'images' => ['jpg','jpeg','png']
     ],
-    'storage_dir' => 'public',
-    'upload_dir' => 'upload',
-    'files_dir' => 'files',
-    'images_dir' => 'images',
+    'storage_dir' => 'storage',
+    'upload_dir' => 'app/public/uploads',
     'prefix' => '',
     'limit' => 1000,
+    'add_id_directory' => true,
+    'before_limit' => true,
 ];
