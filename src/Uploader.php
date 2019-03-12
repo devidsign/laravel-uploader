@@ -181,7 +181,7 @@ class Uploader
             : last(explode('/', $this->file->mime));
 
         $filename = $this->getPath() . $this->_getName();
-        return $this->file->save($filename, $quality);
+        return $this->_response($this->file->save($filename, $quality));
     }
 
     public function file($data = false)
@@ -196,7 +196,7 @@ class Uploader
         $this->ext = $this->file->guessExtension();
         $filename = $this->getPath() . $this->_getName();
 
-        return $this->file->move($filename);
+        return $this->_response($this->file->move($filename));
     }
 
     public function getInfo()
